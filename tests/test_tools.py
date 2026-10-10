@@ -190,3 +190,105 @@ async def test_read_text_file_reports_permission_denied(tmp_path: Path) -> None:
 
     assert result.is_error
     assert "Permission denied" in _text(result)
+
+
+async def test_write_file_creates_and_then_overwrites(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    nested = root / "nested"
+    nested.mkdir(parents=True)
+    note = nested / "note.txt"
+    server = build_server([str(root)])
+
+    async with Client(server) as client:
+        created = await client.call_tool(
+            "write_file", {"path": str(note), "content": "one"}
+        )
+        overwritten = await client.call_tool(
+            "write_file", {"path": "nested/note.txt", "content": "two"}
+        )
+
+    canonical = str(note.resolve())
+    assert not created.is_error
+    assert _text(created) == f"Wrote 3 bytes to {canonical}"
+    assert not overwritten.is_error
+    assert _text(overwritten) == f"Wrote 3 bytes to {canonical}"
+    assert note.read_text(encoding="utf-8") == "two"
+
+
+async def test_write_file_refuses_a_missing_parent_and_does_not_create_it(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    server = build_server([str(root)])
+
+    async with Client(server) as client:
+        result = await client.call_tool(
+            "write_file", {"path": str(root / "missing" / "note.txt"), "content": "x"}
+        )
+
+    assert result.is_error
+    assert "parent directory does not exist" in _text(result)
+    assert not (root / "missing").exists()
+
+
+async def test_write_file_refuses_a_directory(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    server = build_server([str(root)])
+
+    async with Client(server) as client:
+        result = await client.call_tool("write_file", {"path": str(root), "content": "x"})
+
+    assert result.is_error
+    assert "is a directory" in _text(result)
+
+
+async def test_write_file_over_the_limit_leaves_an_existing_file_unchanged(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    note = root / "note.txt"
+    note.write_text("keep", encoding="utf-8")
+    server = build_server([str(root)])
+
+    async with Client(server) as client:
+        result = await client.call_tool(
+            "write_file", {"path": str(note), "content": "a" * 1_048_577}
+        )
+
+    assert result.is_error
+    assert "larger than 1 MiB" in _text(result)
+    assert note.read_text(encoding="utf-8") == "keep"
+
+
+async def test_write_file_refuses_a_lone_surrogate_and_leaves_the_file_unchanged(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    note = root / "note.txt"
+    note.write_text("keep", encoding="utf-8")
+    server = build_server([str(root)])
+
+    async with Client(server) as client:
+        result = await client.call_tool(
+            "write_file", {"path": str(note), "content": "\ud800"}
+        )
+
+    assert result.is_error
+    assert "not valid UTF-8" in _text(result)
+    assert note.read_text(encoding="utf-8") == "keep"
+
+
+async def test_write_file_outside_the_root_is_a_tool_error(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "secret.txt"
+    server = build_server([str(root)])
+
+    async with Client(server) as client:
+        result = await client.call_tool(
+            "write_file", {"path": str(outside), "content": "no"}
+        )
+
+    assert result.is_error
+    assert "outside the allowed directories" in _text(result)
+    assert not outside.exists()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from collections.abc import Sequence
 
 from mcp.server import MCPServer
@@ -57,6 +58,45 @@ def register(server: MCPServer, roots: Sequence[str]) -> None:
             raise ToolError(f"{path} does not exist") from exc
         except OSError as exc:
             raise ToolError(str(exc)) from exc
+
+    @server.tool(
+        annotations=ToolAnnotations(
+            read_only_hint=False,
+            destructive_hint=True,
+            idempotent_hint=True,
+            open_world_hint=False,
+        )
+    )
+    def write_file(path: str, content: str) -> str:
+        """Create or overwrite a UTF-8 text file inside an allowed root."""
+        canonical = _resolved(path, roots)
+        if os.path.isdir(canonical):
+            raise ToolError(f"{path} is a directory")
+        try:
+            data = content.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ToolError(f"{path} is not valid UTF-8") from exc
+        if len(data) > MAX_BYTES:
+            raise ToolError(f"{path} is larger than 1 MiB")
+        parent = os.path.dirname(canonical)
+        if not os.path.isdir(parent):
+            raise ToolError(f"{path} parent directory does not exist")
+        temporary = None
+        try:
+            descriptor, temporary = tempfile.mkstemp(dir=parent)
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(data)
+            os.replace(temporary, canonical)
+            temporary = None
+        except OSError as exc:
+            raise ToolError(str(exc)) from exc
+        finally:
+            if temporary is not None:
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass
+        return f"Wrote {len(data)} bytes to {canonical}"
 
 
 def _resolved(path: str, roots: Sequence[str]) -> str:
