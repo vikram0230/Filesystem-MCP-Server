@@ -1,0 +1,25 @@
+[project]
+name = "filesystem-mcp"
+version = "0.1.0"
+description = "Local filesystem MCP server over stdio"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=2,<3",
+]
+
+[project.scripts]
+filesystem-mcp = "filesystem_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
